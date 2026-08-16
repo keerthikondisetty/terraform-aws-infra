@@ -56,7 +56,105 @@ resource "aws_kms_key" "db" {
   enable_key_rotation     = true
   deletion_window_in_days = 30
 
+  # Explicit rather than the implicit default, which grants the whole account
+  # access through IAM. A key protecting a database should be narrower.
+  policy = data.aws_iam_policy_document.db_key.json
+
   tags = var.tags
+}
+
+data "aws_caller_identity" "current" {}
+
+data "aws_iam_policy_document" "db_key" {
+  #checkov:skip=CKV_AWS_109:Key administration has to live somewhere; without the root grant the key is orphaned.
+  #checkov:skip=CKV_AWS_111:Same statement -- the documented way to keep a KMS key administrable.
+  #checkov:skip=CKV_AWS_356:kms:* on "*" in a key policy scopes to this key alone; the wildcard is the only accepted form.
+
+  statement {
+    sid       = "AllowAccountAdministration"
+    effect    = "Allow"
+    actions   = ["kms:*"]
+    resources = ["*"]
+
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+  }
+
+  statement {
+    sid    = "AllowRDS"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt",
+      "kms:Decrypt",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:CreateGrant",
+      "kms:DescribeKey",
+    ]
+    resources = ["*"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["rds.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [data.aws_caller_identity.current.account_id]
+    }
+  }
+}
+
+# Query logging. Off by default in RDS, and the first thing you want when
+# somebody reports "the app got slow last Tuesday".
+resource "aws_db_parameter_group" "this" {
+  name_prefix = "${var.name}-"
+  family      = "postgres${split(".", var.engine_version)[0]}"
+  description = "Logging and statement timeout for ${var.name}"
+
+  # Refuse unencrypted connections outright. Postgres will happily accept
+  # plaintext otherwise, and "we assumed the VPC was private" is how database
+  # traffic ends up readable to anything else in the VPC.
+  parameter {
+    name  = "rds.force_ssl"
+    value = "1"
+  }
+
+  parameter {
+    name  = "log_statement"
+    value = "ddl"
+  }
+
+  # Log anything slower than a second rather than every statement. Logging
+  # everything on a busy database costs more in I/O than the queries do.
+  parameter {
+    name  = "log_min_duration_statement"
+    value = "1000"
+  }
+
+  parameter {
+    name  = "log_connections"
+    value = "1"
+  }
+
+  parameter {
+    name  = "log_disconnections"
+    value = "1"
+  }
+
+  lifecycle {
+    create_before_destroy = true
+  }
+
+  tags = var.tags
+}
+
+resource "aws_kms_alias" "db" {
+  name          = "alias/${var.name}-db"
+  target_key_id = aws_kms_key.db.key_id
 }
 
 resource "aws_db_instance" "this" {
@@ -95,6 +193,13 @@ resource "aws_db_instance" "this" {
   skip_final_snapshot       = false
   final_snapshot_identifier = "${var.name}-final-${formatdate("YYYYMMDDhhmmss", timestamp())}"
   deletion_protection       = var.deletion_protection
+
+  parameter_group_name = aws_db_parameter_group.this.name
+
+  # IAM authentication as well as the password. It lets an application assume
+  # a role and request a short-lived token instead of holding a long-lived
+  # credential, and costs nothing to leave enabled for whoever wants it.
+  iam_database_authentication_enabled = true
 
   auto_minor_version_upgrade = true
   apply_immediately          = false
@@ -141,6 +246,7 @@ resource "aws_iam_role_policy_attachment" "monitoring" {
 }
 
 resource "aws_secretsmanager_secret" "db" {
+  #checkov:skip=CKV2_AWS_57:Automatic rotation needs a rotation Lambda with network access to the database, which is a larger piece of work than this module covers. IAM authentication is enabled above as the path that avoids a long-lived password entirely; the generated one is the fallback. Rotating it is tracked, not forgotten.
   name_prefix = "${var.name}/database-"
   description = "Connection details for the ${var.name} database"
   kms_key_id  = aws_kms_key.db.arn
