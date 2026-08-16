@@ -1,0 +1,112 @@
+name: terraform
+
+on:
+  push:
+    branches: [main]
+    paths: ['**.tf', '.github/workflows/terraform.yml']
+  pull_request:
+    paths: ['**.tf', '.github/workflows/terraform.yml']
+
+permissions:
+  contents: read
+  pull-requests: write
+  security-events: write
+
+concurrency:
+  group: terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TOFU_VERSION: '1.12.5'
+
+jobs:
+  static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      - name: fmt
+        # -check, not a rewrite. CI that reformats your code hides the fact
+        # that somebody committed unformatted code.
+        run: tofu fmt -check -recursive -diff
+
+      - name: validate every environment
+        run: |
+          set -euo pipefail
+          for dir in envs/*/; do
+            echo "::group::validate ${dir}"
+            # -backend=false so validation needs no credentials and no state.
+            tofu -chdir="${dir}" init -backend=false -input=false -no-color
+            tofu -chdir="${dir}" validate -no-color
+            echo "::endgroup::"
+          done
+
+      - name: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: .
+          framework: terraform
+          quiet: true
+          output_format: cli,sarif
+          output_file_path: console,checkov.sarif
+          soft_fail: false
+
+      - name: upload checkov sarif
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: checkov.sarif
+
+  plan:
+    needs: static
+    runs-on: ubuntu-latest
+    # No AWS account is wired to this repository, so the plan job skips rather
+    # than failing on a missing credential. Set the three repository variables
+    # and it runs exactly as written.
+    if: vars.AWS_REGION != ''
+    permissions:
+      contents: read
+      id-token: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: opentofu/setup-opentofu@v1
+        with:
+          tofu_version: ${{ env.TOFU_VERSION }}
+
+      # OIDC federation, so there is no long-lived access key in this
+      # repository's secrets to leak.
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.PLAN_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: plan-${{ github.run_id }}
+
+      - name: plan
+        run: |
+          set -euo pipefail
+          tofu -chdir=envs/dev init -input=false \
+            -backend-config="bucket=${{ vars.STATE_BUCKET }}" \
+            -backend-config="region=${{ vars.AWS_REGION }}"
+          tofu -chdir=envs/dev plan -no-color -input=false -lock=false | tee plan.txt
+
+      - name: comment the plan on the pull request
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            // Truncated: a comment over 65536 characters is rejected outright,
+            // and a plan for a real estate gets there easily.
+            const plan = fs.readFileSync('plan.txt', 'utf8').slice(0, 60000);
+            await github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: `### Plan: \`envs/dev\`\n\n<details><summary>Show plan</summary>\n\n\`\`\`terraform\n${plan}\n\`\`\`\n\n</details>`
+            });
