@@ -3,9 +3,14 @@ name: terraform
 on:
   push:
     branches: [main]
-    paths: ['**.tf', '.github/workflows/terraform.yml']
+    paths: ['**.tf', '**.tfvars.example', '.github/workflows/terraform.yml']
   pull_request:
-    paths: ['**.tf', '.github/workflows/terraform.yml']
+    paths: ['**.tf', '**.tfvars.example', '.github/workflows/terraform.yml']
+  # So the checks can be run on demand. Path filters mean an initial push, or
+  # a change to only the README, triggers nothing at all -- and a repository
+  # whose checks have simply never run looks identical to one whose checks
+  # pass.
+  workflow_dispatch:
 
 permissions:
   contents: read
