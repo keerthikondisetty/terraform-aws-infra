@@ -1,5 +1,7 @@
 # terraform-aws-infra
 
+[![terraform](https://github.com/keerthikondisetty/terraform-aws-infra/actions/workflows/terraform.yml/badge.svg)](https://github.com/keerthikondisetty/terraform-aws-infra/actions/workflows/terraform.yml) [![licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
+
 The AWS environment that runs
 [devops-demo-app](https://github.com/keerthikondisetty/devops-demo-app):
 a VPC across two availability zones, an application load balancer, instances in
@@ -46,7 +48,7 @@ The rule keeps meaning "from the load balancer" as subnets and addresses
 change, and it cannot be quietly widened the way `10.0.0.0/8` can.
 
 **The database security group has no egress rule at all.** Not a restrictive
-one — none. A database has no reason to open outbound connections, and the
+one at all. A database has no reason to open outbound connections, and the
 absence of a rule states that more clearly than any rule could.
 
 **No SSH anywhere.** Access is SSM Session Manager: no port 22, no key pair to
@@ -100,17 +102,17 @@ validation {
 
 Three managed rule groups, and they are deliberately not all set the same way:
 
-- **Rate limiting** — blocks. 2000 requests per five minutes from one IP. This
+- **Rate limiting** blocks. 2000 requests per five minutes from one IP. This
   is the rule that earns its keep against credential stuffing.
-- **KnownBadInputs** — blocks, from day one. It matches specific exploit
+- **KnownBadInputs** blocks from day one. It matches specific exploit
   signatures like Log4Shell's `${jndi:` rather than inferring intent from
   ordinary traffic, so its false-positive rate is close to zero. Counting a
   known-exploited RCE while you "evaluate" it is not a real position.
-- **CommonRuleSet** — counts. This one *does* have false positives against
+- **CommonRuleSet** counts. This one *does* have false positives against
   real applications, and discovering that by blocking production traffic is
   the wrong order. Move it to block once the sampled requests show what it
   would have caught.
-- **AnonymousIpList** — counts, and stays counting. A large share of ordinary
+- **AnonymousIpList** counts, and stays counting. A large share of ordinary
   users sit behind a corporate VPN. Blocking is a support-ticket generator;
   the metric is genuinely useful for characterising a traffic burst.
 
@@ -147,13 +149,13 @@ tofu -chdir=envs/dev init \
 Nine, and each carries its reason on the resource. Two are worth reading
 because they are *not* "I could not be bothered":
 
-**`CKV2_AWS_76` and `CKV2_AWS_31`** — the WAF genuinely has both required rule
+**`CKV2_AWS_76` and `CKV2_AWS_31`**: the WAF genuinely has both required rule
 groups and a logging configuration. Checkov's graph checks cannot traverse a
 `count`-gated resource. I confirmed that rather than assuming it: deleting
 `count = var.enable_waf ? 1 : 0` takes the run from 190 passed / 1 failed to
 191 passed / 0 failed, with no other change.
 
-**`CKV2_AWS_57`** — automatic secret rotation needs a rotation Lambda with
+**`CKV2_AWS_57`**: automatic secret rotation needs a rotation Lambda with
 network access to the database, which is more than this module covers. IAM
 database authentication is enabled as the path that avoids a long-lived
 password entirely; the generated one is the fallback.
@@ -167,12 +169,12 @@ Checkov's first run found seven failures. Six were real and got fixed:
 
 - The VPC's default security group allows everything between its members.
   Nothing uses it, but an instance launched without an explicit group lands
-  there, so it is declared with no rules — which empties it, since it cannot
+  there, so it is declared with no rules, which empties it, since it cannot
   be deleted.
 - Flow log retention was 90 days. Flow logs get asked "was this happening
   before the incident too", usually months later. A year, with a validation
   block so it cannot be lowered quietly.
-- RDS had no query logging. `log_min_duration_statement = 1000` — slow queries
+- RDS had no query logging. `log_min_duration_statement = 1000`, slow queries
   only, because logging every statement on a busy database costs more I/O than
   the queries do.
 - `rds.force_ssl = 1`. Postgres accepts plaintext otherwise, and "we assumed
