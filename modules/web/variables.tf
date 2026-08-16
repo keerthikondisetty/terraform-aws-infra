@@ -101,3 +101,35 @@ variable "tags" {
   default     = {}
 }
 
+variable "enable_waf" {
+  description = <<-DESC
+    Attach a WAF to the load balancer. Roughly $5/month plus per-request
+    charges. The rate limit is the part that pays for itself; the managed rule
+    groups start in count mode so they cannot break real traffic on day one.
+  DESC
+  type        = bool
+  default     = true
+}
+
+variable "waf_rate_limit" {
+  description = "Requests per five minutes from a single IP before it is blocked."
+  type        = number
+  default     = 2000
+
+  validation {
+    condition     = var.waf_rate_limit >= 100
+    error_message = "AWS enforces a floor of 100 requests per five minutes on a rate-based rule."
+  }
+}
+
+variable "waf_log_retention_days" {
+  description = "Retention for WAF logs."
+  type        = number
+  default     = 365
+}
+
+variable "waf_log_kms_key_arn" {
+  description = "KMS key for the WAF log group. Null uses the CloudWatch default key."
+  type        = string
+  default     = null
+}
