@@ -47,9 +47,18 @@ variable "single_nat_gateway" {
 }
 
 variable "flow_log_retention_days" {
-  description = "Retention for VPC flow logs."
+  description = <<-DESC
+    Retention for VPC flow logs. A year, because the question flow logs get
+    asked is "was this happening before the incident too", and that is usually
+    asked months later.
+  DESC
   type        = number
-  default     = 90
+  default     = 365
+
+  validation {
+    condition     = var.flow_log_retention_days >= 365
+    error_message = "Keep flow logs for at least a year; they are the only record of who talked to what."
+  }
 }
 
 variable "tags" {

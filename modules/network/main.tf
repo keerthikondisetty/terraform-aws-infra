@@ -29,6 +29,16 @@ resource "aws_vpc" "this" {
   tags = merge(var.tags, { Name = var.name })
 }
 
+# Every VPC is created with a default security group that allows all traffic
+# between anything attached to it. Nothing here uses it, but an instance
+# launched without an explicit group lands in it, so it is worth emptying.
+# Declaring it with no rules does exactly that -- it cannot be deleted.
+resource "aws_default_security_group" "this" {
+  vpc_id = aws_vpc.this.id
+
+  tags = merge(var.tags, { Name = "${var.name}-default-do-not-use" })
+}
+
 resource "aws_internet_gateway" "this" {
   vpc_id = aws_vpc.this.id
   tags   = merge(var.tags, { Name = var.name })
