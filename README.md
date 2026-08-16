@@ -2,7 +2,7 @@
 
 [![terraform](https://github.com/keerthikondisetty/terraform-aws-infra/actions/workflows/terraform.yml/badge.svg)](https://github.com/keerthikondisetty/terraform-aws-infra/actions/workflows/terraform.yml) [![licence](https://img.shields.io/badge/licence-MIT-blue.svg)](LICENSE)
 
-The AWS environment that runs
+The AWS environment that runs the webhook receiver in
 [devops-demo-app](https://github.com/keerthikondisetty/devops-demo-app):
 a VPC across two availability zones, an application load balancer, instances in
 an autoscaling group, and a Postgres database. Three modules, one environment
@@ -67,6 +67,22 @@ the instance is running, so an instance whose application has wedged stays
 is asking whether the instance can serve traffic, which is a different question
 from whether the process is alive. The app repo explains why those are two
 endpoints.
+
+**The queue stays in Postgres.** The app uses a `deliveries` table with
+`SELECT ... FOR UPDATE SKIP LOCKED` rather than SQS, and this environment does
+not add SQS to "fix" that.
+
+That is the decision I would defend hardest here. A Postgres queue handles
+thousands of jobs a minute, gives transactional enqueue for free, and RDS is
+already in the diagram and already backed up. Adding SQS means a second
+durability story, a second thing to grant IAM for, a second place to look
+during an incident, and a dead-letter queue that is separate from the dead
+letters the application already tracks in a table you can query with SQL.
+
+You move to SQS when you need fan-out to several consumers, or ordering
+guarantees Postgres will not give you, or throughput past what one database
+will carry. None of those are true here, and "we might need it later" is how
+an architecture diagram gets to twelve boxes.
 
 **The database password is generated, never a variable.** A variable ends up in
 a tfvars file, and a tfvars file ends up in git. It goes straight to Secrets
