@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars and fill in. Not committed: the values are
+# account-specific, and a committed tfvars is how an account id or a bucket
+# name ends up in a public repository.
+
+certificate_arn   = "arn:aws:acm:us-east-1:111122223333:certificate/00000000-0000-0000-0000-000000000000"
+access_log_bucket  = "my-org-elb-access-logs"
+app_image          = "ghcr.io/keerthikondisetty/devops-demo-app@sha256:..."
